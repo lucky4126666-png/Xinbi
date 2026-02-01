@@ -1,10 +1,6 @@
 import json
 import os
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -14,11 +10,11 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 8572604188  # ← ĐỔI ID ADMIN Ở ĐÂY
+ADMIN_ID = 8572604188  # ← ĐỔI ID TELEGRAM CỦA BẠN
 DATA_FILE = "data.json"
 
 
-# ---------- DATA ----------
+# ========= DATA =========
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -34,7 +30,7 @@ def save_data(data):
 data = load_data()
 
 
-# ---------- MENUS ----------
+# ========= MENUS =========
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Thêm từ khóa", callback_data="add_kw")],
@@ -53,7 +49,7 @@ def keyword_menu(key):
     ])
 
 
-# ---------- START ----------
+# ========= START =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
         await update.message.reply_text(
@@ -62,170 +58,143 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ---------- BUTTON HANDLER ----------
+# ========= BUTTON HANDLER =========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user = query.from_user.id
-    if user != ADMIN_ID:
+    if query.from_user.id != ADMIN_ID:
         return
 
-    data_btn = query.data
+    cmd = query.data
 
-    if data_btn == "add_kw":
+    if cmd == "add_kw":
         context.user_data["step"] = "wait_keyword"
         await query.message.reply_text("✏️ Nhập từ khóa:")
 
-    elif data_btn == "list_kw":
+    elif cmd == "list_kw":
         if not data:
             await query.message.reply_text("📭 Chưa có từ khóa")
             return
-        for key in data:
-            await query.message.reply_text(
-                f"🔑 {key}",
-                reply_markup=keyword_menu(key)
-            )
+        for k in data:
+            await query.message.reply_text(f"🔑 {k}", reply_markup=keyword_menu(k))
 
-    elif data_btn == "back":
-        await query.message.reply_text(
-            "⬅️ Quay lại menu",
-            reply_markup=admin_menu()
-        )
+    elif cmd == "back":
+        await query.message.reply_text("⬅️ Menu", reply_markup=admin_menu())
 
-    elif data_btn.startswith("text:"):
-        key = data_btn.split(":")[1]
+    elif cmd.startswith("text:"):
+        key = cmd.split(":")[1]
         context.user_data["step"] = "wait_text"
         context.user_data["key"] = key
-        await query.message.reply_text("✏️ Gửi nội dung mới:")
+        await query.message.reply_text("✏️ Gửi nội dung:")
 
-    elif data_btn.startswith("img:"):
-        key = data_btn.split(":")[1]
+    elif cmd.startswith("img:"):
+        key = cmd.split(":")[1]
         context.user_data["step"] = "wait_image"
         context.user_data["key"] = key
         await query.message.reply_text("🖼️ Gửi ảnh:")
 
-    elif data_btn.startswith("btn:"):
-        key = data_btn.split(":")[1]
+    elif cmd.startswith("btn:"):
+        key = cmd.split(":")[1]
         context.user_data["step"] = "wait_button"
         context.user_data["key"] = key
-        await query.message.reply_text("🔘 Nhập: Tên nút | Link")
+        await query.message.reply_text("🔘 Nhập: Tên | Link")
 
-    elif data_btn.startswith("del:"):
-        key = data_btn.split(":")[1]
+    elif cmd.startswith("del:"):
+        key = cmd.split(":")[1]
         data.pop(key, None)
         save_data(data)
-        await query.message.reply_text("🗑️ Đã xóa từ khóa")
+        await query.message.reply_text("🗑️ Đã xóa")
 
-    elif data_btn.startswith("preview:"):
-        key = data_btn.split(":")[1]
-        item = data[key]
+    elif cmd.startswith("preview:"):
+        key = cmd.split(":")[1]
+        await send_reply(query.message, key)
 
-        if item["text"]:
-            await query.message.reply_text(item["text"])
 
-        for img in item["images"]:
-            await query.message.reply_photo(img)
+# ========= TEXT ROUTER (FIX LỖI CHÍNH) =========
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message.text.strip()
 
-        if item["buttons"]:
-            kb = [[InlineKeyboardButton(b["text"], url=b["url"])] for b in item["buttons"]]
-            await query.message.reply_text(
-                "👇 Nút:",
-                reply_markup=InlineKeyboardMarkup(kb)
+    # ----- ADMIN FLOW -----
+    if update.effective_user.id == ADMIN_ID:
+        step = context.user_data.get("step")
+
+        if step == "wait_keyword":
+            key = msg.lower()
+            data[key] = {"text": "", "images": [], "buttons": []}
+            save_data(data)
+            context.user_data.clear()
+            await update.message.reply_text(
+                f"✅ Đã tạo từ khóa: {key}",
+                reply_markup=keyword_menu(key)
             )
+            return
+
+        if step == "wait_text":
+            key = context.user_data["key"]
+            data[key]["text"] = msg
+            save_data(data)
+            context.user_data.clear()
+            await update.message.reply_text("✅ Đã lưu nội dung")
+            return
+
+        if step == "wait_button":
+            key = context.user_data["key"]
+            if "|" not in msg:
+                await update.message.reply_text("❌ Sai định dạng: Tên | Link")
+                return
+            name, link = msg.split("|", 1)
+            data[key]["buttons"].append({
+                "text": name.strip(),
+                "url": link.strip()
+            })
+            save_data(data)
+            context.user_data.clear()
+            await update.message.reply_text("✅ Đã thêm nút")
+            return
+
+    # ----- USER AUTO REPLY -----
+    key = msg.lower()
+    if key in data:
+        await send_reply(update.message, key)
 
 
-# ---------- TEXT HANDLER ----------
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    step = context.user_data.get("step")
-    msg = update.message.text
-
-    if step == "wait_keyword":
-        key = msg.lower()
-        data[key] = {"text": "", "images": [], "buttons": []}
-        save_data(data)
-        context.user_data.clear()
-        await update.message.reply_text(
-            f"✅ Đã tạo từ khóa: {key}",
-            reply_markup=keyword_menu(key)
-        )
-
-    elif step == "wait_text":
-        key = context.user_data["key"]
-        data[key]["text"] = msg
-        save_data(data)
-        context.user_data.clear()
-        await update.message.reply_text("✅ Đã cập nhật nội dung")
-
-
-# ---------- PHOTO HANDLER ----------
+# ========= PHOTO =========
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     if context.user_data.get("step") == "wait_image":
         key = context.user_data["key"]
-        file_id = update.message.photo[-1].file_id
-        data[key]["images"].append(file_id)
+        photo_id = update.message.photo[-1].file_id
+        data[key]["images"].append(photo_id)
         save_data(data)
         context.user_data.clear()
         await update.message.reply_text("✅ Đã lưu ảnh")
 
 
-# ---------- BUTTON TEXT ----------
-async def button_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if context.user_data.get("step") == "wait_button":
-        key = context.user_data["key"]
-        if "|" not in update.message.text:
-            await update.message.reply_text("❌ Sai định dạng")
-            return
-        name, link = update.message.text.split("|", 1)
-        data[key]["buttons"].append({
-            "text": name.strip(),
-            "url": link.strip()
-        })
-        save_data(data)
-        context.user_data.clear()
-        await update.message.reply_text("✅ Đã thêm nút")
-
-
-# ---------- AUTO REPLY ----------
-async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if text not in data:
-        return
-
-    item = data[text]
+# ========= SEND REPLY =========
+async def send_reply(message, key):
+    item = data[key]
 
     if item["text"]:
-        await update.message.reply_text(item["text"])
+        await message.reply_text(item["text"])
 
     for img in item["images"]:
-        await update.message.reply_photo(img)
+        await message.reply_photo(img)
 
     if item["buttons"]:
         kb = [[InlineKeyboardButton(b["text"], url=b["url"])] for b in item["buttons"]]
-        await update.message.reply_text(
-            "👇 Chọn:",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+        await message.reply_text("👇 Chọn:", reply_markup=InlineKeyboardMarkup(kb))
 
 
-# ---------- MAIN ----------
+# ========= MAIN =========
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_text_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
     print("🤖 Bot đang chạy...")
     app.run_polling()
